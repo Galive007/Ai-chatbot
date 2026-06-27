@@ -10,7 +10,7 @@ import { agentRelationshipSystem } from '@/services/agentRelationshipSystem';
 import { agentStatusSystem } from '@/services/agentStatusSystem';
 import { topicMemorySystem } from '@/services/topicMemorySystem';
 import { messageQueueSystem } from '@/services/messageQueueSystem';
-import { parseTopics, detectMentions } from '@/utils/conversationUtils';
+import { parseTopics, detectMentions, detectUserMood, detectUserIntent, inferConversationGoal } from '@/utils/conversationUtils';
 import { PromptBuilder } from '@/services/promptBuilder';
 
 export class EnhancedConversationEngine {
@@ -73,6 +73,12 @@ export class EnhancedConversationEngine {
    */
   buildEnhancedContext(message, allMessages, topic, mentionedAgents) {
     const recentMessages = conversationManager.getRecentMessages(8);
+    const userMood = detectUserMood(message.text);
+    const userIntent = detectUserIntent(message.text);
+    const conversationGoal = inferConversationGoal(message.text, userMood);
+    const recentAgentResponses = recentMessages
+      .filter((msg) => msg.sender !== 'You')
+      .slice(-4);
 
     return {
       topic,
@@ -84,6 +90,11 @@ export class EnhancedConversationEngine {
       agentRelationships: agentRelationshipSystem.getSummary(),
       topicContext: topicMemorySystem.getTopicContext(topic),
       trendingTopics: topicMemorySystem.getTrendingTopics(3),
+      userMood,
+      userIntent,
+      conversationGoal,
+      recentAgentResponses,
+      userMessage: message.text,
     };
   }
 
@@ -149,8 +160,9 @@ export class EnhancedConversationEngine {
         const systemPrompt = PromptBuilder.buildSystemPrompt(agentId);
         const userPrompt = this.buildEnhancedPrompt(agentId, context, userMessage, replyType);
 
-        // Wait through a natural typing delay before generating the reply
-        await new Promise((resolve) => setTimeout(resolve, typingDelay));
+        // Wait through a natural typing delay, adjusted by context
+        const contextualDelay = agentBehaviorEngine.getTypingDelay(agentId, context);
+        await new Promise((resolve) => setTimeout(resolve, contextualDelay));
 
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -187,9 +199,9 @@ export class EnhancedConversationEngine {
             createdAt: new Date().toISOString(),
           });
 
-          // Update agent status with approximate response time (typingDelay)
+          // Update agent status with response time
           try {
-            agentStatusSystem.recordResponse(agentId, typingDelay || 0);
+            agentStatusSystem.recordResponse(agentId, contextualDelay || 0);
           } catch (e) {
             // ignore
           }

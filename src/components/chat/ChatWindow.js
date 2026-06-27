@@ -19,6 +19,8 @@ export default function ChatWindow() {
   const { searchOpen, settingsOpen } = useUiStore();
   const loadMessages = useChatStore((state) => state.loadMessages);
   const messages = useChatStore((state) => state.messages);
+  const startIdleMonitoring = useChatStore((state) => state.startIdleMonitoring);
+  const stopIdleMonitoring = useChatStore((state) => state.stopIdleMonitoring);
   const scrollContainerRef = useRef(null);
   const [activePanel, setActivePanel] = useState(null); // null, 'analytics', 'status', 'rooms', 'insights'
 
@@ -28,14 +30,16 @@ export default function ChatWindow() {
     const initialize = async () => {
       if (!active) return;
       await loadMessages();
+      startIdleMonitoring();
     };
 
     initialize();
 
     return () => {
       active = false;
+      stopIdleMonitoring();
     };
-  }, [loadMessages]);
+  }, [loadMessages, startIdleMonitoring, stopIdleMonitoring]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -55,44 +59,40 @@ export default function ChatWindow() {
         <div className="flex gap-2">
           <button
             onClick={() => setActivePanel(activePanel === 'analytics' ? null : 'analytics')}
-            className={`px-3 py-1 rounded text-sm transition ${
-              activePanel === 'analytics'
+            className={`px-3 py-1 rounded text-sm transition ${activePanel === 'analytics'
                 ? 'bg-blue-600 text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-            }`}
+              }`}
             title="Analytics Dashboard"
           >
             📊
           </button>
           <button
             onClick={() => setActivePanel(activePanel === 'status' ? null : 'status')}
-            className={`px-3 py-1 rounded text-sm transition ${
-              activePanel === 'status'
+            className={`px-3 py-1 rounded text-sm transition ${activePanel === 'status'
                 ? 'bg-green-600 text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-            }`}
+              }`}
             title="Agent Status"
           >
             ⚡
           </button>
           <button
             onClick={() => setActivePanel(activePanel === 'rooms' ? null : 'rooms')}
-            className={`px-3 py-1 rounded text-sm transition ${
-              activePanel === 'rooms'
+            className={`px-3 py-1 rounded text-sm transition ${activePanel === 'rooms'
                 ? 'bg-purple-600 text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-            }`}
+              }`}
             title="Multi-Room"
           >
             🏠
           </button>
           <button
             onClick={() => setActivePanel(activePanel === 'insights' ? null : 'insights')}
-            className={`px-3 py-1 rounded text-sm transition ${
-              activePanel === 'insights'
+            className={`px-3 py-1 rounded text-sm transition ${activePanel === 'insights'
                 ? 'bg-yellow-600 text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-            }`}
+              }`}
             title="Insights"
           >
             💡

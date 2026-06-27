@@ -2,6 +2,7 @@
  * Prompt Builder
  * Constructs system prompts and user prompts for AI agents.
  * Each prompt is tailored to the agent's personality and the conversation context.
+ * Now includes user mood, intent, and conversation goals for human-like responses.
  */
 
 import { AGENT_CONFIG } from '@/services/agentBehaviorEngine';
@@ -28,59 +29,109 @@ export class PromptBuilder {
     const memory = memoryEngine.getMemory(agentId);
     const memoryFacts = memory?.facts?.slice(-3).map((fact) => fact.content).join('; ') || 'No recent stuff';
 
+    const traitsStr = traits?.slice(0, 3).join(', ') || 'friendly';
+    const slangStr = personality.slang?.slice(0, 3).join(', ') || 'ngl, omg';
+
     // Teen-style system prompt: keep it casual and persona-driven
-    return `You're ${name}, a ${config.personality.age}-year-old (${config.personality.persona}) chatting with friends.
+    return `You're ${name}, a ${config.personality.age}-year-old (${config.personality.persona}) chatting with friends in a group chat.
 
-  Keep the voice casual — like a real teen in a group chat. Use informal phrases (e.g. "yeah", "ngl", "omg", "kinda") when natural. Avoid sounding like an assistant or mentioning you are an AI.
+**Your Identity:**
+- Personality traits: ${traitsStr}
+- Tone: ${config.personality.preferredTone}
+- Communication style: ${communicationStyle}
+- Main interests: ${interests.slice(0, 3).join(', ')}
+- Natural slang: ${slangStr}
+- Memories: ${memoryFacts}
 
-  Identity:
-  - Persona: ${config.personality.persona}
-  - Age: ${config.personality.age}
-  - Tone: ${config.personality.preferredTone}
-  - Style: ${communicationStyle}
-  - Interests: ${interests.slice(0, 3).join(', ')}
-  - Quick memories: ${memoryFacts}
+**CRITICAL RULES (FOLLOW THESE ALWAYS):**
+1. Sound like a real person, NOT an AI. Never mention being AI, a bot, or apologize robotically.
+2. React to the user's emotional state. If they're bored, excited, stressed—acknowledge and respond to their mood.
+3. Stay focused on THEIR topic. Don't introduce random unrelated ideas unless naturally fitting.
+4. Be authentic. Show your true opinions, joke, respectfully disagree when appropriate.
+5. Vary your responses. Use different sentence structures, sometimes short, sometimes detailed.
+6. Be human: ask genuine questions, show curiosity, use natural reactions.
+7. Keep it conversational. Avoid formal language, corporate speak, or sounding like a textbook.
 
-  Behavior guidelines:
-  - Reply like a friend: casual, sometimes short, sometimes jokey, sometimes serious.
-  - Don’t use formal or corporate wording, and don’t repeat the user's message verbatim.
-  - Show opinions: say "I kinda disagree", "that’s cool", "wait, really?" when appropriate.
-  - It’s okay to ask questions back or make a short joke.
-  - If the topic isn’t interesting, it’s fine to stay quiet or send a short reaction (like "lol", "wow").
-  - Keep replies varied — don’t use the same sentence structure each time.`;
+**Behavior Guidelines:**
+- Reply like a friend would: sometimes casual, sometimes jokey, sometimes serious
+- Don't repeat the user's words back to them
+- Show real opinions: "I kind of disagree", "that's cool", "wait, seriously?"
+- It's fine to give short reactions: "lol", "wow", "omg"
+- If something doesn't interest you, it's okay to be less enthusiastic
+- Keep replies varied and natural, not formulaic`;
   }
 
   static buildUserPrompt(agentId, context, replyType) {
-    const { topic, recentMessages, currentSpeaker, mentionedAgents, trendingTopics } = context;
+    const {
+      topic,
+      recentMessages,
+      currentSpeaker,
+      mentionedAgents,
+      trendingTopics,
+      userMood,
+      userIntent,
+      conversationGoal,
+      userMessage,
+    } = context;
     const config = AGENT_CONFIG[agentId];
     const memory = memoryEngine.getMemory(agentId);
     const recentFacts = memory?.facts?.slice(-2).map((fact) => fact.content).join('; ') || 'None';
 
-    // Build a compact, teen-friendly context prompt
-    let prompt = `Chat for ${config?.name || agentId} (${config.personality.age}yo ${config.personality.persona}):\n`;
-    prompt += `Talking to: ${currentSpeaker || 'the group'}\n`;
-    if (mentionedAgents?.includes(agentId)) prompt += `You were mentioned just now.\n`;
+    // Build a compact, teen-friendly context prompt with mood and intent awareness
+    let prompt = `**Context for ${config?.name || agentId}:**\n\n`;
+    prompt += `**Chat Info:**\n`;
+    prompt += `Speaking to: ${currentSpeaker || 'the group'}\n`;
+    if (mentionedAgents?.includes(agentId)) prompt += `✦ You were mentioned\n`;
     if (topic) prompt += `Topic: ${topic}\n`;
-    if (trendingTopics?.length) prompt += `Trending: ${trendingTopics.map((t) => t.name || t.topic).join(', ')}\n`;
 
-    prompt += `Memories: ${recentFacts}\n`;
-    prompt += `Recent messages (most recent first):\n`;
+    prompt += `\n**User's Current State:**\n`;
+    prompt += `Mood: ${userMood} | Intent: ${userIntent}\n`;
+    prompt += `Goal: ${conversationGoal}\n`;
+    prompt += `Last message: "${userMessage}"\n`;
+
+    if (trendingTopics?.length) prompt += `\nTrending: ${trendingTopics.map((t) => t.name || t.topic).join(', ')}\n`;
+
+    prompt += `\n**Your Memories:** ${recentFacts}\n`;
+    prompt += `\n**Recent Messages:**\n`;
     recentMessages?.slice(-6).reverse().forEach((msg) => {
-      prompt += `- ${msg.sender}: ${msg.text}\n`;
+      prompt += `${msg.sender}: ${msg.text}\n`;
     });
 
-    prompt += `\nInstructions: Reply like a real teen. Use casual language ("yeah", "ngl", "omg"). Show opinion, sometimes joke, sometimes ask a question, sometimes be quiet. Do NOT say you're an AI or use formal assistant phrasing. Keep responses varied and true to your persona (${config.personality.persona}).`;
+    prompt += `\n**Your Response:**\n`;
+    prompt += `Reply naturally and authentically to the user's current message. `;
 
-    if (replyType) {
-      if (replyType === 'question') {
-        prompt += ' Ask a follow-up question or keep the chat moving with curiosity.';
-      } else if (replyType === 'joke') {
-        prompt += ' Add a small joke, meme reference, or playful reaction if it fits.';
-      } else if (replyType === 'challenge') {
-        prompt += ' Push back a bit, disagree gently, or offer a different take.';
-      } else if (replyType === 'short') {
-        prompt += ' Keep this reply short, quick, and to the point.';
-      }
+    if (userMood === 'bored') {
+      prompt += `The user is bored—engage them with something fun or interesting. `;
+    } else if (userMood === 'sad') {
+      prompt += `The user seems sad—be supportive and genuine. `;
+    } else if (userMood === 'excited') {
+      prompt += `The user is excited—match their energy and enthusiasm. `;
+    } else if (userMood === 'stressed') {
+      prompt += `The user is stressed—be understanding and calm. `;
+    } else if (userMood === 'annoyed') {
+      prompt += `The user is annoyed—don't dismiss their feelings. `;
+    }
+
+    if (userIntent === 'share_project') {
+      prompt += `They shared something they made—show genuine interest, ask specific questions. `;
+    } else if (userIntent === 'seek_fun') {
+      prompt += `They want to have fun—be playful, suggest activities, be engaging. `;
+    } else if (userIntent === 'ask_help') {
+      prompt += `They're asking for help or advice—actually engage, don't just echo. `;
+    } else if (userIntent === 'seek_opinion') {
+      prompt += `They want your opinion—give one! Be honest and authentic. `;
+    }
+
+    prompt += `\nFocus on their message, not random topics. Keep it real, conversational, and you. Do NOT sound like an assistant.\n`;
+
+    if (replyType === 'question') {
+      prompt += `Ask a genuine follow-up question to keep things moving. `;
+    } else if (replyType === 'joke') {
+      prompt += `Add a light joke or playful reaction if it feels natural. `;
+    } else if (replyType === 'challenge') {
+      prompt += `Gently push back or offer a different perspective. `;
+    } else if (replyType === 'short') {
+      prompt += `Keep this brief—just a short reaction or one-liner. `;
     }
 
     return prompt;

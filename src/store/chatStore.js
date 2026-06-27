@@ -9,6 +9,7 @@ import { topicMemorySystem } from '@/services/topicMemorySystem';
 import { agentRelationshipSystem } from '@/services/agentRelationshipSystem';
 import { agentStatusSystem } from '@/services/agentStatusSystem';
 import { multiRoomChatSystem } from '@/services/multiRoomChatSystem';
+import { idleConversationSystem } from '@/services/idleConversationSystem';
 
 export const useChatStore = create((set, get) => ({
   messages: [],
@@ -18,6 +19,7 @@ export const useChatStore = create((set, get) => ({
   initialized: false,
   typingAgents: {},
   conversationState: {},
+  idleCheckInterval: null,
   setDraft: (draft) => set({ draft }),
   setReplyTo: (replyTo) => set({ replyTo }),
   setTyping: (agentId, isTyping) =>
@@ -43,6 +45,7 @@ export const useChatStore = create((set, get) => ({
       topicMemorySystem.clear();
       agentRelationshipSystem.reset();
       agentStatusSystem.resetAllStats();
+      idleConversationSystem.reset();
     } catch (error) {
       console.error('Failed to clear inbox and memory:', error);
     }
@@ -123,6 +126,9 @@ export const useChatStore = create((set, get) => ({
       text: normalizedText,
       replyTo: state.replyTo,
     });
+
+    // Record user activity for idle detection
+    idleConversationSystem.recordUserMessage();
 
     // Add to global store
     set((current) => ({
@@ -220,5 +226,80 @@ export const useChatStore = create((set, get) => ({
         return { ...message, reactions: [...message.reactions, { emoji, count: 1 }] };
       }),
     }));
+  },
+  startIdleMonitoring: () => {
+    const state = get();
+    if (state.idleCheckInterval) return;
+
+    const interval = setInterval(async () => {
+      const currentState = get();
+      const idleEvent = idleConversationSystem.checkIdleAndTrigger(currentState.messages);
+
+      if (!idleEvent) return;
+
+      const { agents, context } = idleEvent;
+
+      for (const agentId of agents) {
+        try {
+          get().setTyping(agentId, true);
+
+          const delay = 2000 + Math.random() * 3000;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+
+          // Generate idle response
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentId,
+              agentConfig: require('@/services/agentBehaviorEngine').AGENT_CONFIG[agentId],
+              context: {
+                topic: 'idle_check_in',
+                userMood: 'neutral',
+                userIntent: 'idle_check_in',
+                conversationGoal: 'Re-engage the user naturally',
+                recentMessages: context.recentMessages || [],
+                userMessage: 'idle_check_in',
+              },
+            }),
+          });
+
+          const data = await response.json();
+
+          if (data.success && data.result) {
+            const aiMessage = await ChatService.saveMessage({
+              senderId: agentId,
+              senderName: require('@/services/agentBehaviorEngine').AGENT_CONFIG[agentId].name,
+              senderType: 'ai',
+              text: data.result.text,
+            });
+
+            get().setTyping(agentId, false);
+
+            set((current) => ({
+              messages: [...current.messages, aiMessage],
+            }));
+
+            try {
+              multiRoomChatSystem.addMessage(aiMessage);
+            } catch (e) {
+              console.warn('Failed to add idle message to room:', e);
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to generate idle response for ${agentId}:`, error);
+          get().setTyping(agentId, false);
+        }
+      }
+    }, 5000); // Check every 5 seconds
+
+    set({ idleCheckInterval: interval });
+  },
+  stopIdleMonitoring: () => {
+    const state = get();
+    if (state.idleCheckInterval) {
+      clearInterval(state.idleCheckInterval);
+      set({ idleCheckInterval: null });
+    }
   },
 }));
