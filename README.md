@@ -14,7 +14,7 @@ A realistic multi-agent AI group chat simulation using Next.js, React, Zustand, 
 - **Fixed Composer**: Input area stays pinned while messages scroll
 
 ### 🤖 AI & Agent Systems
-- **Multi-Agent Support**: Three distinct AI personalities (Alex, Mia, Noah)
+- **Multi-Agent Support**: Nine distinct AI personalities
 - **Agent Behavior Engine**: Personality-driven decision making
   - Mood system: Affects willingness to respond
   - Energy system: Determines response frequency
