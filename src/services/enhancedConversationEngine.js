@@ -33,7 +33,7 @@ export class EnhancedConversationEngine {
 
     try {
       console.log('🔄 Processing user message:', message.text);
-      
+
       // Step 1: Record in conversation manager
       conversationManager.addMessageToSession(message);
 
@@ -109,13 +109,16 @@ export class EnhancedConversationEngine {
   }
 
   /**
-   * Select which agents should respond
+   * Select which agents should respond (MAX 2 to prevent API spam)
    */
   selectResponders(context, allMessages) {
     const agentIds = agentBehaviorEngine.selectResponders(context);
 
-    if (agentIds.length > 0) {
-      return agentIds.map((agentId) => ({
+    // LIMIT: Only select max 2 agents to prevent API rate limit spam
+    const limited = agentIds.slice(0, 2);
+
+    if (limited.length > 0) {
+      return limited.map((agentId) => ({
         agentId,
         priority: 'normal',
         reason: 'behavior',
@@ -149,7 +152,7 @@ export class EnhancedConversationEngine {
   }
 
   /**
-   * Generate and queue responses
+   * Generate and queue responses with fallback handling
    */
   async generateAndQueueResponses(responders, context, userMessage, handlers = {}) {
     const responses = [];
@@ -166,12 +169,10 @@ export class EnhancedConversationEngine {
       }
 
       try {
-        // Generate response via API
         const agentConfig = AGENT_CONFIG[agentId];
         const systemPrompt = PromptBuilder.buildSystemPrompt(agentId);
         const userPrompt = this.buildEnhancedPrompt(agentId, context, userMessage, replyType);
 
-        // Wait through a natural typing delay, adjusted by context
         const contextualDelay = agentBehaviorEngine.getTypingDelay(agentId, context);
         console.log(`⏳ ${agentId} typing delay: ${contextualDelay}ms`);
         await new Promise((resolve) => setTimeout(resolve, contextualDelay));
@@ -190,51 +191,86 @@ export class EnhancedConversationEngine {
         });
 
         const data = await response.json();
+        let finalText = null;
+        let fallbackReason = null;
 
         if (!response.ok) {
-          console.error(`❌ API error for ${agentId}:`, data);
-          throw new Error(`API returned ${response.status}: ${data.error}`);
+          const errorMsg = data?.error || `HTTP ${response.status}`;
+          const isRateLimit = response.status === 429 || /429|Rate limit/i.test(errorMsg);
+
+          if (isRateLimit) {
+            console.warn(`⚠️ Rate limit detected for ${agentId}. Using fallback response.`);
+            finalText = this.generateFallbackResponse(agentId, context, 'RATE_LIMIT');
+            fallbackReason = 'RATE_LIMIT';
+          } else {
+            console.warn(`⚠️ API error for ${agentId}. Using fallback response:`, errorMsg);
+            finalText = this.generateFallbackResponse(agentId, context, errorMsg);
+            fallbackReason = 'API_ERROR';
+          }
+        } else if (data.success && data.result) {
+          console.log(`✅ ${agentId} response successful`);
+          finalText = data.result.text;
+        } else {
+          console.warn(`⚠️ ${agentId} API response not successful. Using fallback.`);
+          finalText = this.generateFallbackResponse(agentId, context, 'INVALID_API_RESPONSE');
+          fallbackReason = 'INVALID_API_RESPONSE';
         }
 
-        if (data.success && data.result) {
-          console.log(`✅ ${agentId} response successful:`, data.result.text.substring(0, 50) + '...');
+        if (finalText) {
           const aiMessage = {
             agentId,
             agentName: agentConfig.name,
-            text: data.result.text,
+            text: finalText,
             timestamp: new Date().toISOString(),
-            confidence: this.calculateResponseConfidence(agentId, context),
+            confidence: fallbackReason ? 0.6 : this.calculateResponseConfidence(agentId, context),
           };
 
           responses.push(aiMessage);
 
-          // Record in conversation manager
           conversationManager.addMessageToSession({
             senderId: agentId,
             senderName: agentConfig.name,
             senderType: 'ai',
-            text: data.result.text,
+            text: finalText,
             createdAt: new Date().toISOString(),
           });
 
-          // Update agent status with response time
           try {
             agentStatusSystem.recordResponse(agentId, contextualDelay || 0);
           } catch (e) {
             // ignore
           }
 
-          // Record topic discussion
-          topicMemorySystem.recordTopicDiscussion(context.topic, agentId, data.result.text, 'positive');
+          if (!fallbackReason) {
+            topicMemorySystem.recordTopicDiscussion(context.topic, agentId, finalText, 'positive');
+          }
+
+          if (handlers.onAgentResponse) {
+            await handlers.onAgentResponse(aiMessage);
+          }
+        }
+      } catch (error) {
+        const agentConfig = AGENT_CONFIG[agentId];
+        const finalText = this.generateFallbackResponse(agentId, context, error.message || 'UNKNOWN_ERROR');
+
+        if (finalText) {
+          console.warn(`⚠️ Fallback response used for ${agentId} after exception:`, error.message);
+          const aiMessage = {
+            agentId,
+            agentName: agentConfig.name,
+            text: finalText,
+            timestamp: new Date().toISOString(),
+            confidence: 0.6,
+          };
+
+          responses.push(aiMessage);
 
           if (handlers.onAgentResponse) {
             await handlers.onAgentResponse(aiMessage);
           }
         } else {
-          console.warn(`⚠️ ${agentId} API response not successful:`, data);
+          console.error(`❌ Failed to generate fallback response for ${agentId}:`, error.message);
         }
-      } catch (error) {
-        console.error(`❌ Failed to generate response for ${agentId}:`, error);
       } finally {
         if (handlers.onTypingEnd) {
           handlers.onTypingEnd(agentId);
@@ -243,6 +279,47 @@ export class EnhancedConversationEngine {
     }
 
     return responses;
+  }
+
+  /**
+   * Generate fallback response when API fails
+   */
+  generateFallbackResponse(agentId, context, error) {
+    const agentConfig = AGENT_CONFIG[agentId];
+    const name = agentConfig.name;
+    const mood = context.userMood || 'neutral';
+    const topic = context.topic || 'that';
+
+    // Rate limit message
+    if (error === 'RATE_LIMIT') {
+      const rateMessages = [
+        `Hey, API's being slow right now. But about ${topic}... that's interesting 👀`,
+        `Sorry, bit of a lag on my end. Anyway, ${topic}? What do you think about it?`,
+        `API's taking a breather lol. But really, tell me more about ${topic}!`,
+        `Internet hiccup! Anyway, back to ${topic}... 😄`,
+      ];
+      return rateMessages[Math.floor(Math.random() * rateMessages.length)];
+    }
+
+    // Generic fallback responses based on mood
+    if (mood === 'bored') {
+      return `Okay so ${topic} might actually be more interesting than you think... wanna hear about it?`;
+    } else if (mood === 'sad') {
+      return `Yeah, ${topic} is something to think about. You doing okay though? 💙`;
+    } else if (mood === 'excited') {
+      return `YES! I'm here for this ${topic} energy! Tell me everything! �`;
+    } else if (mood === 'stressed') {
+      return `Deep breath! About ${topic}, let's break it down step by step, yeah?`;
+    }
+
+    // Default responses
+    const defaults = [
+      `Yo, ${topic}! That's something. What's your take?`,
+      `Interesting point about ${topic}. I got thoughts on that.`,
+      `${topic}, huh? Yeah, I feel that. What else?`,
+      `That's wild. So about ${topic}...`,
+    ];
+    return defaults[Math.floor(Math.random() * defaults.length)];
   }
 
   /**

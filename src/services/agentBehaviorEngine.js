@@ -624,7 +624,10 @@ class AgentBehaviorEngine {
 
     const responders = scoredAgents.filter((agent) => agent.shouldReply).map((agent) => agent.agentId);
 
-    if (responders.length > 0) return responders;
+    if (responders.length > 0) {
+      // LIMIT: Return max 2 responders to prevent API spam
+      return responders.slice(0, 2);
+    }
 
     return this.selectRandomResponder(context);
   }

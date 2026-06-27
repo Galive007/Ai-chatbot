@@ -41,15 +41,21 @@ function buildContextualReply(payload) {
   // Base replies follow teen tone: casual, opinionated, short or playful
   let response;
   if (isMentioned) {
-    response = `Oh hey, about ${topic} — hmm, ${Math.random() > 0.5 ? "I think" : "ngl"} we could try a quick example to make it clear.`;
+    response = `Oh hey, about ${topic} — hmm, ${Math.random() > 0.5 ? "I think" : "ngl"} we could try a quick example to make it clearer.`;
   } else if (hasStudySignals) {
-    response = `TBH, for ${topic} I'd split it into 2 steps and start with the easiest one.`;
+    response = `TBH, for ${topic} I'd just break it into two easy steps and start with the simplest part.`;
   } else if (hasCreativeSignals) {
-    response = `That actually sparks an idea — imagine ${topic} as a story where...`;
+    response = `That actually sparks an idea — imagine ${topic} as a story where the main thing gets flipped.`;
   } else if (hasTechnicalSignals) {
-    response = `Okay, quick take on ${topic}: check the main assumption first, then test it with a tiny example.`;
+    response = `Okay, quick take on ${topic}: I’d check the main assumption first and maybe run a tiny test.`;
   } else {
-    response = `Hmm, ${topic} sounds interesting. Maybe ask a clearer question or drop an example?`;
+    const friendlyVariants = [
+      `Hmm, ${topic} sounds cool. What part are you stuck on?`,
+      `That’s interesting. Can you say a bit more about what you mean?`,
+      `I kinda wanna know more before I say anything. What’s the exact issue?`,
+      `Yo, ${topic} is wild. What do you want to do with it?`,
+    ];
+    response = friendlyVariants[Math.floor(Math.random() * friendlyVariants.length)];
   }
 
   // Persona-based flavor
@@ -203,6 +209,18 @@ class GroqProvider {
         const errorData = await response.json().catch(() => null);
         const errorMessage =
           errorData?.error?.message || errorData?.message || response.statusText || 'Unknown Groq API error';
+        const isRateLimit = response.status === 429 || /429|Rate limit/i.test(errorMessage);
+
+        if (isRateLimit) {
+          return {
+            success: false,
+            error: `Groq API rate limit: ${errorMessage}`,
+            provider: PROVIDERS.GROQ,
+            model: this.model,
+            rateLimit: true,
+          };
+        }
+
         throw new Error(`Groq API error: ${response.status} - ${errorMessage}`);
       }
 
@@ -222,7 +240,10 @@ class GroqProvider {
         model: this.model,
       };
     } catch (error) {
-      console.error('Groq API error:', error);
+      const isRateLimit = /429|Rate limit/i.test(error?.message || '');
+      const logFn = isRateLimit ? console.warn : console.error;
+      logFn('Groq API error:', error);
+
       return {
         success: false,
         error: error?.message || 'Groq API request failed',
@@ -278,6 +299,15 @@ class ProviderManager {
     }
 
     return result;
+  }
+
+  async generateLocalReply(payload, provider = this.activeProvider) {
+    const providerInstance = this.providers[provider];
+    if (!providerInstance || typeof providerInstance.generateLocalReply !== 'function') {
+      throw new Error(`Provider ${provider} does not support local fallback`);
+    }
+
+    return providerInstance.generateLocalReply(payload);
   }
 
   /**

@@ -45,20 +45,47 @@ export async function POST(req) {
     });
 
     if (!result.success) {
+      const isRateLimit = /429|Rate limit/i.test(result.error || '');
+
+      if (isRateLimit) {
+        const fallback = await providerManager.generateLocalReply(
+          {
+            systemPrompt,
+            prompt: userPrompt,
+            generationConfig,
+          },
+          result.provider,
+        );
+
+        return Response.json(
+          {
+            success: true,
+            result: {
+              text: fallback.text,
+              provider: fallback.provider,
+              model: fallback.model,
+              usage: fallback.usage,
+              fallback: true,
+              fallbackReason: 'rate_limit',
+            },
+          },
+          { status: 200 },
+        );
+      }
+
+      const errorPayload = {
+        success: false,
+        error: result.error || 'Failed to generate response',
+        provider: result.provider,
+      };
+
       const error = new AppError('Provider failed to generate response', ERROR_TYPES.API_ERROR, {
         provider: result.provider,
         providerError: result.error,
       });
       errorHandler.handle(error);
 
-      return Response.json(
-        {
-          success: false,
-          error: result.error || 'Failed to generate response',
-          provider: result.provider,
-        },
-        { status: 502 },
-      );
+      return Response.json(errorPayload, { status: 502 });
     }
 
     return Response.json({

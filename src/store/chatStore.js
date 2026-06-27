@@ -182,7 +182,7 @@ export const useChatStore = create((set, get) => ({
           },
         }
       );
-      
+
       console.log('✅ Conversation engine processing complete. Result:', result);
 
       // Update conversation state
