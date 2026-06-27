@@ -23,35 +23,45 @@ export class EnhancedConversationEngine {
    * Process a user message through the complete pipeline
    */
   async processUserMessage(message, allMessages, handlers = {}) {
-    if (this.processing) return null;
+    if (this.processing) {
+      console.warn('⚠️ Conversation engine is already processing a message');
+      return null;
+    }
 
     this.processing = true;
     this.lastProcessedTime = Date.now();
 
     try {
+      console.log('🔄 Processing user message:', message.text);
+      
       // Step 1: Record in conversation manager
       conversationManager.addMessageToSession(message);
 
       // Step 2: Extract conversation context
       const topic = parseTopics(message.text);
       const mentionedAgents = detectMentions(message.text);
+      console.log('📌 Extracted topic:', topic, 'Mentioned agents:', mentionedAgents);
 
       // Step 3: Record topic discussion
       topicMemorySystem.recordTopicDiscussion(topic, 'user', message.text, 'neutral');
 
       // Step 4: Build enhanced context
       const context = this.buildEnhancedContext(message, allMessages, topic, mentionedAgents);
+      console.log('🎯 Built enhanced context with mood:', context.userMood, 'intent:', context.userIntent);
 
       // Step 5: Select responding agents
       const responders = this.selectResponders(context, allMessages);
+      console.log('✨ Selected responders:', responders.map(r => r.agentId), 'Total:', responders.length);
 
       if (responders.length === 0) {
+        console.log('⚠️ No agents selected to respond');
         this.processing = false;
         return null;
       }
 
       // Step 6: Generate and queue responses
       const responses = await this.generateAndQueueResponses(responders, context, message, handlers);
+      console.log('📝 Generated responses:', responses.length);
 
       // Step 7: Record agent interactions
       this.recordAgentInteractions(responders, message);
@@ -59,7 +69,7 @@ export class EnhancedConversationEngine {
       agentBehaviorEngine.restoreStateOverTime();
       return responses;
     } catch (error) {
-      console.error('Enhanced Conversation Engine error:', error);
+      console.error('❌ Enhanced Conversation Engine error:', error);
       agentBehaviorEngine.restoreStateOverTime();
       this.processing = false;
       return null;
@@ -147,6 +157,7 @@ export class EnhancedConversationEngine {
     for (const responder of responders) {
       const { agentId, priority } = responder;
       const replyType = agentBehaviorEngine.determineReplyType(agentId, context);
+      console.log(`🤖 Generating response for ${agentId}, reply type: ${replyType}`);
 
       // Notify UI of typing start
       const typingDelay = agentBehaviorEngine.getTypingDelay(agentId);
@@ -162,6 +173,7 @@ export class EnhancedConversationEngine {
 
         // Wait through a natural typing delay, adjusted by context
         const contextualDelay = agentBehaviorEngine.getTypingDelay(agentId, context);
+        console.log(`⏳ ${agentId} typing delay: ${contextualDelay}ms`);
         await new Promise((resolve) => setTimeout(resolve, contextualDelay));
 
         const response = await fetch('/api/chat', {
@@ -179,7 +191,13 @@ export class EnhancedConversationEngine {
 
         const data = await response.json();
 
+        if (!response.ok) {
+          console.error(`❌ API error for ${agentId}:`, data);
+          throw new Error(`API returned ${response.status}: ${data.error}`);
+        }
+
         if (data.success && data.result) {
+          console.log(`✅ ${agentId} response successful:`, data.result.text.substring(0, 50) + '...');
           const aiMessage = {
             agentId,
             agentName: agentConfig.name,
@@ -212,9 +230,11 @@ export class EnhancedConversationEngine {
           if (handlers.onAgentResponse) {
             await handlers.onAgentResponse(aiMessage);
           }
+        } else {
+          console.warn(`⚠️ ${agentId} API response not successful:`, data);
         }
       } catch (error) {
-        console.error(`Failed to generate response for ${agentId}:`, error);
+        console.error(`❌ Failed to generate response for ${agentId}:`, error);
       } finally {
         if (handlers.onTypingEnd) {
           handlers.onTypingEnd(agentId);

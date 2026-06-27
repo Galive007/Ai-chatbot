@@ -10,6 +10,7 @@ import { agentRelationshipSystem } from '@/services/agentRelationshipSystem';
 import { agentStatusSystem } from '@/services/agentStatusSystem';
 import { multiRoomChatSystem } from '@/services/multiRoomChatSystem';
 import { idleConversationSystem } from '@/services/idleConversationSystem';
+import { AGENT_CONFIG } from '@/services/agentBehaviorEngine';
 
 export const useChatStore = create((set, get) => ({
   messages: [],
@@ -146,17 +147,21 @@ export const useChatStore = create((set, get) => ({
 
     // Process through Enhanced Conversation Engine
     try {
-      await enhancedConversationEngine.processUserMessage(
+      console.log('📨 Processing message through Enhanced Conversation Engine:', message.text);
+      const result = await enhancedConversationEngine.processUserMessage(
         message,
         get().messages,
         {
           onTypingStart: (agentId, delay) => {
+            console.log(`⌨️ ${agentId} started typing (${delay}ms delay)`);
             get().setTyping(agentId, true);
           },
           onTypingEnd: (agentId) => {
+            console.log(`✓ ${agentId} finished typing`);
             get().setTyping(agentId, false);
           },
           onAgentResponse: async (response) => {
+            console.log(`💬 Received response from ${response.agentName}:`, response.text);
             const aiMessage = await ChatService.saveMessage({
               senderId: response.agentId,
               senderName: response.agentName,
@@ -177,12 +182,14 @@ export const useChatStore = create((set, get) => ({
           },
         }
       );
+      
+      console.log('✅ Conversation engine processing complete. Result:', result);
 
       // Update conversation state
       const newState = enhancedConversationEngine.getState();
       get().updateConversationState(newState);
     } catch (error) {
-      console.error('Enhanced Conversation Engine error:', error);
+      console.error('❌ Enhanced Conversation Engine error:', error);
       // Fallback to simple AI response
       try {
         const response = await fetch('/api/chat', {
@@ -207,7 +214,7 @@ export const useChatStore = create((set, get) => ({
           messages: [...current.messages, aiMessage],
         }));
       } catch (fallbackError) {
-        console.error('Fallback error:', fallbackError);
+        console.error('❌ Fallback error:', fallbackError);
       }
     }
   },
@@ -252,7 +259,7 @@ export const useChatStore = create((set, get) => ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               agentId,
-              agentConfig: require('@/services/agentBehaviorEngine').AGENT_CONFIG[agentId],
+              agentConfig: AGENT_CONFIG[agentId],
               context: {
                 topic: 'idle_check_in',
                 userMood: 'neutral',
@@ -269,7 +276,7 @@ export const useChatStore = create((set, get) => ({
           if (data.success && data.result) {
             const aiMessage = await ChatService.saveMessage({
               senderId: agentId,
-              senderName: require('@/services/agentBehaviorEngine').AGENT_CONFIG[agentId].name,
+              senderName: AGENT_CONFIG[agentId].name,
               senderType: 'ai',
               text: data.result.text,
             });
